@@ -27,20 +27,29 @@ Do NOT wrap the JSON in Markdown code blocks (like \`\`\`json). Provide ONLY the
 `;
 
   try {
-    // Connect directly to local Ollama inference server mapping port 11434
-    const response = await fetch('http://127.0.0.1:11434/api/generate', {
+    const baseUrl = process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434';
+    const modelName = process.env.OLLAMA_MODEL || 'llama3:8b';
+
+    // 5-minute (300,000ms) native timeout for LLM cold starts
+    const timeoutSignal = AbortSignal.timeout(300000);
+
+    // Connect directly to local Ollama inference server
+    const response = await fetch(`${baseUrl}/api/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'llama3',
+        model: modelName,
         prompt: prompt,
         stream: false,
         format: 'json'
-      })
+      }),
+      signal: timeoutSignal
     });
 
     if (!response.ok) {
-       return sendError(res, 503, 'Internal LLM inference engine offline or unreachable (Ollama).');
+      const errorBody = await response.text();
+      console.error('Ollama responded with an error:', response.status, errorBody);
+      return sendError(res, 503, 'Internal LLM inference engine offline or unreachable (Ollama).');
     }
 
     const data = await response.json();
@@ -54,14 +63,15 @@ Do NOT wrap the JSON in Markdown code blocks (like \`\`\`json). Provide ONLY the
     }
 
     const aiResult = JSON.parse(rawJsonText);
-    
+
     // Safety verification check enforcing requested payload string
     if (!aiResult.disclaimer || aiResult.disclaimer.length < 5) {
-        aiResult.disclaimer = "This is not a medical diagnosis. Please consult a doctor.";
+      aiResult.disclaimer = "This is not a medical diagnosis. Please consult a doctor.";
     }
 
     sendSuccess(res, 200, 'AI symptom analysis generated successfully', aiResult);
   } catch (err) {
+    console.error('Ollama connection/request error:', err);
     return sendError(res, 500, 'Local Llama3 engine fault: ' + err.message);
   }
 });
